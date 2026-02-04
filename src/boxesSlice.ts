@@ -33,6 +33,22 @@ const boxesSlice = createSlice({
   name: "boxes",
   initialState,
   reducers: {
+    setEntries(state, action: PayloadAction<string[]>) {
+      if (action.payload.length !== TOTAL_CELLS) {
+        return;
+      }
+      state.entries = action.payload;
+    },
+    setDigits(
+      state,
+      action: PayloadAction<{
+        rowDigits: Array<number | null>;
+        colDigits: Array<number | null>;
+      }>,
+    ) {
+      state.rowDigits = action.payload.rowDigits;
+      state.colDigits = action.payload.colDigits;
+    },
     selectBox(state, action: PayloadAction<number | null>) {
       state.selectedIndex = action.payload;
     },
@@ -61,7 +77,14 @@ const boxesSlice = createSlice({
   },
 });
 
-export const { selectBox, setEntry, clearEntry, clearAll, randomizeDigits } =
-  boxesSlice.actions;
+export const {
+  setEntries,
+  setDigits,
+  selectBox,
+  setEntry,
+  clearEntry,
+  clearAll,
+  randomizeDigits,
+} = boxesSlice.actions;
 
 export default boxesSlice.reducer;

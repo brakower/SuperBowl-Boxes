@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   clearEntry,
-  randomizeDigits,
   selectBox,
+  setDigits,
+  setEntries,
   setEntry,
 } from "./boxesSlice";
+import { supabase } from "./supabaseClient";
 import type { RootState } from "./store";
 import "./App.css";
 
@@ -18,6 +20,24 @@ const getRowCol = (index: number) => {
 };
 
 const formatDigit = (digit: number | null) => (digit === null ? "—" : digit);
+
+const normalizeDigits = (value: unknown) => {
+  if (!Array.isArray(value)) {
+    return Array.from({ length: GRID_SIZE }, () => null);
+  }
+  return value.map((digit) =>
+    typeof digit === "number" && Number.isFinite(digit) ? digit : null,
+  );
+};
+
+const shuffleDigits = () => {
+  const digits = Array.from({ length: GRID_SIZE }, (_, i) => i);
+  for (let i = digits.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [digits[i], digits[j]] = [digits[j], digits[i]];
+  }
+  return digits;
+};
 
 function App() {
   const dispatch = useDispatch();
@@ -39,9 +59,96 @@ function App() {
     return entries[selectedIndex] ?? "";
   }, [entries, selectedIndex]);
 
+  const hasSupabase = Boolean(supabase);
+
   useEffect(() => {
     setPendingName(selectedName);
   }, [selectedName]);
+
+  useEffect(() => {
+    if (!hasSupabase || !supabase) {
+      return undefined;
+    }
+
+    let isMounted = true;
+
+    const loadInitial = async () => {
+      const { data: boxRows, error: boxError } = await supabase
+        .from("boxes")
+        .select("id, name")
+        .order("id", { ascending: true });
+
+      if (!boxError && boxRows && isMounted) {
+        const nextEntries = Array.from({ length: GRID_SIZE * GRID_SIZE }, () => "");
+        boxRows.forEach((row) => {
+          if (typeof row.id === "number" && row.id >= 0 && row.id < nextEntries.length) {
+            nextEntries[row.id] = row.name ?? "";
+          }
+        });
+        dispatch(setEntries(nextEntries));
+      }
+
+      const { data: settings } = await supabase
+        .from("digit_settings")
+        .select("row_digits, col_digits")
+        .eq("id", 1)
+        .maybeSingle();
+
+      if (settings && isMounted) {
+        dispatch(
+          setDigits({
+            rowDigits: normalizeDigits(settings.row_digits),
+            colDigits: normalizeDigits(settings.col_digits),
+          }),
+        );
+      }
+    };
+
+    loadInitial();
+
+    const boxesChannel = supabase
+      .channel("boxes-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "boxes" },
+        (payload) => {
+          const rowId = payload.new?.id ?? payload.old?.id;
+          if (typeof rowId !== "number") {
+            return;
+          }
+
+          if (payload.eventType === "DELETE") {
+            dispatch(clearEntry(rowId));
+            return;
+          }
+
+          dispatch(setEntry({ index: rowId, name: payload.new?.name ?? "" }));
+        },
+      )
+      .subscribe();
+
+    const digitsChannel = supabase
+      .channel("digits-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "digit_settings" },
+        (payload) => {
+          dispatch(
+            setDigits({
+              rowDigits: normalizeDigits(payload.new?.row_digits),
+              colDigits: normalizeDigits(payload.new?.col_digits),
+            }),
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(boxesChannel);
+      supabase.removeChannel(digitsChannel);
+    };
+  }, [dispatch, hasSupabase]);
 
   const selectedInfo = useMemo(() => {
     if (selectedIndex === null) {
@@ -90,7 +197,21 @@ function App() {
           <div className="panel-actions">
             <button
               className="primary"
-              onClick={() => dispatch(randomizeDigits())}
+              onClick={async () => {
+                const nextRowDigits = shuffleDigits();
+                const nextColDigits = shuffleDigits();
+                dispatch(setDigits({ rowDigits: nextRowDigits, colDigits: nextColDigits }));
+
+                if (supabase) {
+                  await supabase
+                    .from("digit_settings")
+                    .upsert({
+                      id: 1,
+                      row_digits: nextRowDigits,
+                      col_digits: nextColDigits,
+                    });
+                }
+              }}
               disabled
             >
               Randomize Digits
@@ -198,13 +319,18 @@ function App() {
             <div className="panel-actions">
               <button
                 className="primary"
-                onClick={() => {
+                onClick={async () => {
                   if (selectedIndex === null) {
                     return;
                   }
-                  dispatch(
-                    setEntry({ index: selectedIndex, name: pendingName.trim() }),
-                  );
+                  const trimmed = pendingName.trim();
+                  dispatch(setEntry({ index: selectedIndex, name: trimmed }));
+
+                  if (supabase) {
+                    await supabase
+                      .from("boxes")
+                      .upsert({ id: selectedIndex, name: trimmed });
+                  }
                 }}
                 disabled={selectedIndex === null}
               >
@@ -212,11 +338,18 @@ function App() {
               </button>
               <button
                 className="ghost"
-                onClick={() => {
+                onClick={async () => {
                   if (selectedIndex === null) {
                     return;
                   }
                   dispatch(clearEntry(selectedIndex));
+
+                  if (supabase) {
+                    await supabase
+                      .from("boxes")
+                      .delete()
+                      .eq("id", selectedIndex);
+                  }
                 }}
                 disabled={selectedIndex === null}
               >
