@@ -2,6 +2,8 @@
 
 Super Bowl Boxes is a polished, real‑time web app for running a classic 10×10 squares pool. It focuses on a clean, mobile‑friendly UI, fast interactions, and reliable synchronization of box claims across devices. The project demonstrates frontend architecture, state management, and realtime data integration with a PostgreSQL backend.
 
+Can be found online here: [https://super-bowl-boxes.vercel.app/](https://super-bowl-boxes.vercel.app/)
+
 ## Project overview
 
 The app lets users:
