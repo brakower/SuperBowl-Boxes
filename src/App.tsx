@@ -21,6 +21,21 @@ const getRowCol = (index: number) => {
 
 const formatDigit = (digit: number | null) => (digit === null ? "—" : digit);
 
+type BoxRow = { id: number; name: string | null };
+type DigitSettingsRow = {
+  id: number;
+  row_digits: unknown;
+  col_digits: unknown;
+};
+type BoxesPayload = {
+  new?: Partial<BoxRow>;
+  old?: Partial<BoxRow>;
+  eventType?: string;
+};
+type DigitsPayload = {
+  new?: Partial<DigitSettingsRow>;
+};
+
 const normalizeDigits = (value: unknown) => {
   if (!Array.isArray(value)) {
     return Array.from({ length: GRID_SIZE }, () => null);
@@ -66,21 +81,23 @@ function App() {
   }, [selectedName]);
 
   useEffect(() => {
-    if (!hasSupabase || !supabase) {
+    const client = supabase;
+    if (!hasSupabase || !client) {
       return undefined;
     }
 
     let isMounted = true;
 
     const loadInitial = async () => {
-      const { data: boxRows, error: boxError } = await supabase
+      const { data: boxRows, error: boxError } = await client
         .from("boxes")
         .select("id, name")
         .order("id", { ascending: true });
 
-      if (!boxError && boxRows && isMounted) {
+      const typedBoxRows = boxRows as BoxRow[] | null;
+      if (!boxError && typedBoxRows && isMounted) {
         const nextEntries = Array.from({ length: GRID_SIZE * GRID_SIZE }, () => "");
-        boxRows.forEach((row) => {
+        typedBoxRows.forEach((row) => {
           if (typeof row.id === "number" && row.id >= 0 && row.id < nextEntries.length) {
             nextEntries[row.id] = row.name ?? "";
           }
@@ -88,17 +105,18 @@ function App() {
         dispatch(setEntries(nextEntries));
       }
 
-      const { data: settings } = await supabase
+      const { data: settings } = await client
         .from("digit_settings")
         .select("row_digits, col_digits")
         .eq("id", 1)
         .maybeSingle();
 
-      if (settings && isMounted) {
+      const typedSettings = settings as DigitSettingsRow | null;
+      if (typedSettings && isMounted) {
         dispatch(
           setDigits({
-            rowDigits: normalizeDigits(settings.row_digits),
-            colDigits: normalizeDigits(settings.col_digits),
+            rowDigits: normalizeDigits(typedSettings.row_digits),
+            colDigits: normalizeDigits(typedSettings.col_digits),
           }),
         );
       }
@@ -106,12 +124,12 @@ function App() {
 
     loadInitial();
 
-    const boxesChannel = supabase
+    const boxesChannel = client
       .channel("boxes-changes")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "boxes" },
-        (payload) => {
+        (payload: BoxesPayload) => {
           const rowId = payload.new?.id ?? payload.old?.id;
           if (typeof rowId !== "number") {
             return;
@@ -127,12 +145,12 @@ function App() {
       )
       .subscribe();
 
-    const digitsChannel = supabase
+    const digitsChannel = client
       .channel("digits-changes")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "digit_settings" },
-        (payload) => {
+        (payload: DigitsPayload) => {
           dispatch(
             setDigits({
               rowDigits: normalizeDigits(payload.new?.row_digits),
@@ -145,8 +163,8 @@ function App() {
 
     return () => {
       isMounted = false;
-      supabase.removeChannel(boxesChannel);
-      supabase.removeChannel(digitsChannel);
+      client.removeChannel(boxesChannel);
+      client.removeChannel(digitsChannel);
     };
   }, [dispatch, hasSupabase]);
 
